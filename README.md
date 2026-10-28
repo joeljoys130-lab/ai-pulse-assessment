@@ -4,8 +4,12 @@ AI Pulse is an organizational diagnostic platform designed to help companies ass
 
 * **Employees** sign in, select their organization, take a role-adapted diagnostic, receive a personal maturity score, and access a personalized **Diagnostic Action Planner** to turn identified skill gaps into concrete habits.
 * **Admins & Leadership** view aggregated AI maturity dashboards across departments and identify high-risk usage patterns, protected by minimum respondent thresholds ($k \ge 5$) and small-group suppression.
-* **Privacy & Data Rights** are enforced at the database level: employees maintain an unequivocal **Right to Delete**, and departments with fewer than 5 respondents are aggregated under "Other teams" with small-group score masking to prevent individual re-identification.
-
+* **Privacy & Data Rights** are implemented through application-level
+authorization, data-deletion operations, and dashboard aggregation controls.
+Departments with fewer than 5 respondents are grouped under "Other teams"
+with small-group score suppression to reduce re-identification risks.
+These controls do not guarantee absolute anonymity or constitute formal
+differential privacy.
 ---
 
 ## 1. Project Overview & Architecture
@@ -111,16 +115,16 @@ AI Pulse is an organizational diagnostic platform designed to help companies ass
 
 ### Pre-Seeded Demo Accounts
 
-All demo accounts are created during database seeding (`python -m app.seed`) with password: `pulse123`
+All demo accounts are populated during database seeding (`backend/app/seed.py`) with shared demo password: `pulse123`
 
-| Email | Organization | Role & Department | Purpose |
-|---|---|---|---|
-| `asha@northwind.test` | Northwind Logistics | Admin (Manager, Lead) | View executive dashboard, test tenant isolation |
-| `vikram@northwind.test` | Northwind Logistics | Employee (Sales, Senior) | Pre-seeded responses, test Right to Delete |
-| `priya@northwind.test` | Northwind Logistics | Employee (Support, Junior) | 14 responses, test Action Planner & reload persistence |
-| `neha@northwind.test` | Northwind Logistics | Employee (Sales, Junior) | Zero responses, test first-time diagnostic flow |
-| `dev@northwind.test` | Northwind Logistics | Employee (Engineering, Lead) | Seniority rank question filtering verification |
-| `ravi@consult.test` | Both Companies | Employee at Northwind, Admin at Bluepeak | Multi-org token scoping & role switching |
+| Name | Email | Organization | Department | System Role (`role`) | Job Role (`job_role`) | Seniority | Testing & Evaluation Focus |
+|---|---|---|---|---|---|---|---|
+| Asha Rao | `asha@northwind.test` | Northwind Logistics | *(None)* | `admin` | `manager` | `lead` | Admin dashboard access & tenant isolation checks |
+| Vikram Shah | `vikram@northwind.test` | Northwind Logistics | Sales | `employee` | `sales` | `senior` | Pre-seeded responses on record; test Right to Delete |
+| Priya Nair | `priya@northwind.test` | Northwind Logistics | Support | `employee` | `support` | `junior` | 14 responses; test Action Planner & state persistence |
+| Neha Gupta | `neha@northwind.test` | Northwind Logistics | Sales | `employee` | `sales` | `junior` | Zero responses; test first-time diagnostic flow |
+| Dev Malhotra | `dev@northwind.test` | Northwind Logistics | Engineering | `employee` | `engineering` | `lead` | Seniority question filtering & lead role verification |
+| Ravi Kapoor | `ravi@consult.test` | Northwind Logistics<br>Bluepeak Retail | HR<br>*(None)* | `employee`<br>`admin` | `manager`<br>`manager` | `senior`<br>`senior` | Multi-org membership & role-scoped token switching |
 
 ### Running Automated Tests and Builds
 
@@ -208,7 +212,11 @@ The implementation directly addresses both business and legal requirements state
 
 ### A. Small-Group Privacy Protections & Minimum Respondent Thresholds ($k \ge 5$)
 
-Rather than formal differential privacy (which injects mathematical noise into statistical queries and would distort small-cohort enterprise analytics), the platform implements a $k$-anonymity-style minimum respondent threshold ($k = 5$) with small-group aggregation and multi-layer suppression:
+Rather than formal differential privacy (which mathematically bounds information leakage by injecting calibrated random noise into query results, such as via Laplace or Gaussian mechanisms under an $\epsilon$-privacy budget), the platform implements a heuristic $k$-anonymity-style minimum respondent threshold ($k = 5$) with small-group aggregation and multi-layer suppression:
+
+> [!NOTE]
+> **Privacy Architecture & Limitations Notice:**
+> Enforcing a minimum respondent threshold of five, aggregating small cohorts under "Other teams", and suppressing group averages and organization-wide risk flags significantly **reduce re-identification risks** in routine dashboard reporting. However, these deterministic aggregation controls **do not guarantee absolute anonymity** (for example, if an internal observer possesses auxiliary external knowledge of exact survey submission times or department rosters) and **do not constitute formal differential privacy**. This pragmatic thresholding design was implemented because it directly fulfills Northwind HR's operational request without introducing mathematical noise or statistical distortion into small organizational team scores.
 
 1. **Accurate Participant Counting:** Rather than counting response rows, the backend computes distinct completed participants (`len(responded_member_ids)`). Repeated or multiple submissions by a single employee do not inflate the participant count.
 2. **"Other teams" Aggregation:**
@@ -307,6 +315,28 @@ To balance assessment scope, portability, and zero-configuration grading against
 | **Database Concurrency** | SQLite file (`aipulse.db`) | Scoped sessions with transaction commits | SQLite requires zero setup for local assessment grading; running PostgreSQL requires Docker or local daemon | Migrate to managed PostgreSQL with connection pooling (e.g. PgBouncer) and Alembic migrations |
 | **Rate Limiting** | No request throttling | Fast rejection of invalid inputs | In-process rate limiters create race conditions across multi-worker ASGI processes | Deploy Nginx / Cloudflare reverse proxy with IP and token rate-limiting rules |
 | **CSRF Protection** | None (Bearer tokens) | Bearer JWT stored in `localStorage` | Bearer tokens in `Authorization` headers are not ambiently attached by browsers, mitigating classic cross-site request forgery | Keep Bearer token architecture; avoid cookie session storage |
+
+### Technical Details of Deferred Work
+
+#### 1. Password Hashing Limitations
+* **Implementation:** `backend/app/auth.py` hashes passwords with `hashlib.sha256(password.encode()).hexdigest()` without salt or key stretching. Verification uses `hmac.compare_digest` to protect against timing side-channel attacks.
+* **Limitation:** Unsalted SHA-256 is computationally trivial to brute-force with modern GPUs and vulnerable to precomputed rainbow tables if the database file is accessed.
+* **Rationale for Deferral:** Upgrading the hashing algorithm immediately would break authentication for existing pre-seeded users in `seed.py`. Production deployment should adopt an adaptive salted algorithm (Argon2id or PBKDF2) paired with an on-login hash migration pipeline.
+
+#### 2. Stateless JWT Token Revocation
+* **Implementation:** `make_token()` generates stateless HMAC-SHA256 JWTs with a 12-hour lifespan (`TOKEN_HOURS = 12`). In `_decode()`, validation is purely cryptographic. When an employee signs out, the client deletes the token from `localStorage` via `clearAuth()`.
+* **Limitation:** If a token is intercepted before sign-out, it remains valid on the server until the 12-hour expiration window lapses because the backend does not maintain a server-side revocation registry.
+* **Rationale for Deferral:** An in-memory token blocklist would reset on server restart and fail across multiple uvicorn worker processes, while a Redis dependency would hinder zero-configuration assessment evaluation. Production should back token invalidation with a Redis cluster or a `token_version` column on the `User` model.
+
+#### 3. Database Concurrency & Write Contention
+* **Implementation:** SQLite (`aipulse.db`) accessed via SQLAlchemy with `connect_args={"check_same_thread": False}`.
+* **Limitation:** SQLite enforces database-level write locks. Under high concurrency with simultaneous diagnostic submissions across large departments, write contention can result in `sqlite3.OperationalError: database is locked`.
+* **Rationale for Deferral:** SQLite requires zero environment setup for evaluators. Production deployment should transition to PostgreSQL with row-level locking (MVCC), PgBouncer connection pooling, and Alembic database migrations.
+
+#### 4. Rate Limiting & Abuse Prevention
+* **Implementation:** Neither `/auth/login` nor `/diagnostic/submit` includes request rate limiting at the application layer.
+* **Limitation:** The authentication endpoint is exposed to credential-stuffing brute force, and the diagnostic submission endpoint could be abused to trigger excessive external LLM API costs.
+* **Rationale for Deferral:** In-process rate limiters create state drift across multi-worker ASGI instances. Standard enterprise practice delegates rate limiting to the ingress / reverse proxy layer (e.g. Nginx `limit_req_zone`, Cloudflare WAF, or AWS API Gateway).
 
 ---
 
