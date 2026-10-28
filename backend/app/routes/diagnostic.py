@@ -53,3 +53,19 @@ def submit(body: SubmitIn, m: models.Membership = Depends(current_membership), d
         db.add(resp)
     db.commit()
     return {"saved": len(body.answers)}
+
+
+@router.delete("/responses")
+def delete_my_responses(m: models.Membership = Depends(current_membership), db: Session = Depends(get_db)):
+    """Delete all diagnostic responses for the authenticated employee in this organization."""
+    try:
+        deleted = db.query(models.Response).filter_by(membership_id=m.id).delete()
+        db.query(models.CompletedAction).filter_by(membership_id=m.id).delete()
+        db.commit()
+        return {
+            "deleted": deleted,
+            "message": "All diagnostic responses deleted",
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"Failed to delete responses: {str(e)}")

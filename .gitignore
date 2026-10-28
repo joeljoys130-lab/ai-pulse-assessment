@@ -1,6 +1,28 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Dependencies & build outputs
 node_modules/
 dist/
+
+# Python cache & test artifacts
 __pycache__/
-*.pyc
-*.db
+*.py[cod]
 .pytest_cache/
+.coverage
+htmlcov/
+
+# Databases
+*.db
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini

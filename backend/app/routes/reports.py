@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from .. import models
 from ..auth import current_membership
 from ..utils import maturity_level
+from ..services.actions import generate_action_plan
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -31,3 +32,55 @@ def my_report(m: models.Membership = Depends(current_membership), db: Session = 
         "risks": flags,
         "next_steps": NEXT_STEPS.get(m.job_role, NEXT_STEPS["manager"]),
     }
+
+
+@router.get("/actions")
+def my_action_plan(m: models.Membership = Depends(current_membership), db: Session = Depends(get_db)):
+    """Returns 3 deterministic, prioritized improvement actions tailored to the employee's diagnostic results."""
+    rows = db.query(models.Response).filter_by(membership_id=m.id).all()
+    actions = generate_action_plan(rows, m.job_role)
+
+    # Check which actions this employee has marked completed
+    completed_rows = db.query(models.CompletedAction).filter_by(membership_id=m.id).all()
+    completed_map = {c.action_id: c.completed_at.isoformat() for c in completed_rows}
+
+    for action in actions:
+        action["completed"] = action["id"] in completed_map
+        action["completed_at"] = completed_map.get(action["id"])
+
+    return actions
+
+
+@router.post("/actions/{action_id}/toggle")
+def toggle_action_completion(action_id: str, m: models.Membership = Depends(current_membership), db: Session = Depends(get_db)):
+    """Toggles completion state of a recommended action for the authenticated employee."""
+    existing = (
+        db.query(models.CompletedAction)
+        .filter_by(membership_id=m.id, action_id=action_id)
+        .first()
+    )
+    if existing:
+        db.delete(existing)
+        db.commit()
+        return {"action_id": action_id, "completed": False}
+    else:
+        new_entry = models.CompletedAction(membership_id=m.id, action_id=action_id)
+        db.add(new_entry)
+        db.commit()
+        return {"action_id": action_id, "completed": True}
+
+
+@router.delete("/me")
+def delete_my_report(m: models.Membership = Depends(current_membership), db: Session = Depends(get_db)):
+    """Delete all diagnostic answers and report data for the authenticated employee in this organization."""
+    try:
+        deleted = db.query(models.Response).filter_by(membership_id=m.id).delete()
+        db.query(models.CompletedAction).filter_by(membership_id=m.id).delete()
+        db.commit()
+        return {
+            "deleted": deleted,
+            "message": "All diagnostic answers and report data deleted",
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"Failed to delete report data: {str(e)}")

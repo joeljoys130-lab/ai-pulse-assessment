@@ -17,11 +17,29 @@ def test_junior_engineer_does_not_get_senior_questions():
     assert "eng-arch" not in got
 
 
+def test_mid_engineer_gets_review_but_not_arch():
+    got = ids(questions_for("engineering", "mid"))
+    assert "eng-assistant" in got
+    assert "eng-review" in got
+    assert "eng-arch" not in got
+
+
 def test_senior_support_gets_escalation_question():
     assert "sup-escalation" in ids(questions_for("support", "senior"))
 
 
 def test_lead_manager_gets_policy_questions():
     got = ids(questions_for("manager", "lead"))
+    assert "mgr-adoption" in got
     assert "mgr-policy" in got
     assert "mgr-open" in got
+
+
+def test_seniority_ordering_hierarchy():
+    # Verify strict progression: junior < mid < senior < lead
+    eng_junior = ids(questions_for("engineering", "junior"))
+    eng_mid = ids(questions_for("engineering", "mid"))
+    eng_senior = ids(questions_for("engineering", "senior"))
+    eng_lead = ids(questions_for("engineering", "lead"))
+
+    assert eng_junior < eng_mid < eng_senior <= eng_lead

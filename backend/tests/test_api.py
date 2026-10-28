@@ -19,11 +19,33 @@ def test_admin_dashboard(client):
     org_id = data["organizations"][0]["org_id"]
     r = client.get(f"/dashboard?org_id={org_id}", headers=headers)
     assert r.status_code == 200
-    assert len(r.json()["departments"]) == 4
+    depts = r.json()["departments"]
+    # Seeded Northwind departments each have < 5 completed participants, so they are grouped under "Other teams"
+    assert len(depts) == 1
+    assert depts[0]["department"] == "Other teams"
+    assert depts[0]["responded"] == 2
+    assert depts[0]["average_score"] is None
 
 
 def test_admin_cannot_see_other_org(client):
     headers, _ = login(client, "asha@northwind.test", "Northwind Logistics")
-    r = client.get("/dashboard?org_id=1", headers=headers)
+    # Bluepeak Retail is org_id=2; Asha is admin only at Northwind Logistics (org_id=1)
+    r = client.get("/dashboard?org_id=2", headers=headers)
+    assert r.status_code == 403
+    assert r.json()["detail"] == "Cannot access data for another organization"
+
+
+def test_employee_with_responses_routing_contract(client):
+    # Employee with existing responses gets answered > 0 -> frontend routes to personal report
+    headers, _ = login(client, "priya@northwind.test", "Northwind Logistics")
+    r = client.get("/reports/me", headers=headers)
     assert r.status_code == 200
-    assert "departments" in r.json()
+    assert r.json()["answered"] > 0
+
+
+def test_employee_without_responses_routing_contract(client):
+    # Employee with no responses gets answered == 0 -> frontend routes to diagnostic
+    headers, _ = login(client, "neha@northwind.test", "Northwind Logistics")
+    r = client.get("/reports/me", headers=headers)
+    assert r.status_code == 200
+    assert r.json()["answered"] == 0

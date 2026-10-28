@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -15,7 +16,7 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return hash_password(password) == hashed
+    return hmac.compare_digest(hash_password(password), hashed)
 
 
 def make_token(user_id: int, org_id: int | None = None) -> str:
@@ -38,7 +39,11 @@ def _decode(authorization: str | None):
 
 def current_user(authorization: str | None = Header(None), db: Session = Depends(get_db)) -> models.User:
     data = _decode(authorization)
-    user = db.get(models.User, int(data["sub"]))
+    try:
+        user_id = int(data.get("sub", ""))
+    except (ValueError, TypeError):
+        raise HTTPException(401, "Invalid token")
+    user = db.get(models.User, user_id)
     if not user:
         raise HTTPException(401, "Unknown user")
     return user
@@ -49,9 +54,14 @@ def current_membership(authorization: str | None = Header(None), db: Session = D
     data = _decode(authorization)
     if not data.get("org"):
         raise HTTPException(400, "Select an organization first")
+    try:
+        user_id = int(data.get("sub", ""))
+        org_id = int(data["org"])
+    except (ValueError, TypeError):
+        raise HTTPException(401, "Invalid token")
     m = (
         db.query(models.Membership)
-        .filter_by(user_id=int(data["sub"]), org_id=data["org"])
+        .filter_by(user_id=user_id, org_id=org_id)
         .first()
     )
     if not m:

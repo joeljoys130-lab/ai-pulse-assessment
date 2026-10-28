@@ -53,3 +53,11 @@ class Response(Base):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     flags: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CompletedAction(Base):
+    __tablename__ = "completed_actions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    membership_id: Mapped[int] = mapped_column(ForeignKey("memberships.id"))
+    action_id: Mapped[str] = mapped_column(String(60))
+    completed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

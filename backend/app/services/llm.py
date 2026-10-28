@@ -33,14 +33,18 @@ def score_answer(question: str, answer: str) -> str:
     """Returns the raw text the model produced."""
     if AI_MODE == "mock":
         return _mock(answer)
-    r = httpx.post(
-        LLM_API_URL,
-        headers={"Authorization": f"Bearer {LLM_API_KEY}"},
-        json={
-            "model": LLM_MODEL,
-            "messages": [{"role": "user", "content": PROMPT.format(question=question, answer=answer)}],
-        },
-        timeout=60,
-    )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    try:
+        r = httpx.post(
+            LLM_API_URL,
+            headers={"Authorization": f"Bearer {LLM_API_KEY}"},
+            json={
+                "model": LLM_MODEL,
+                "messages": [{"role": "user", "content": PROMPT.format(question=question, answer=answer)}],
+            },
+            timeout=60,
+        )
+        r.raise_for_status()
+        data = r.json()
+        return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        raise RuntimeError(f"AI provider error: {str(e)}")
