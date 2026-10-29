@@ -1,10 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .db import Base, engine
+from .db import Base, engine, SessionLocal
 from .routes import auth_routes, diagnostic, reports, dashboard
+from .seed import seed_missing_demo_data
 
 Base.metadata.create_all(bind=engine)
+with SessionLocal() as db:
+    seed_missing_demo_data(db)
 
 app = FastAPI(title="AI Pulse API")
 app.add_middleware(
